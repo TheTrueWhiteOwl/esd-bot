@@ -1,15 +1,17 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use poise::serenity_prelude::*;
 
 mod grade;
 mod register_user;
 mod verify_user;
 
+const INTENTS: GatewayIntents = GatewayIntents::non_privileged().union(GatewayIntents::GUILD_MEMBERS);
+
 // TODO: the data shouldn't just be a unit type lol
-//type FrameworkContext<'a> = poise::FrameworkContext<'a, (), Error>;
+type Data = ();
 
 async fn event_handler(
-    ctx: &Context,
+    ctx: poise::FrameworkContext<'_, Data, Error>,
     event: &FullEvent,
 ) -> Result<()> {
     if let FullEvent::GuildMemberAddition { new_member } = event {
@@ -18,7 +20,9 @@ async fn event_handler(
          *    (https://docs.rs/serenity/0.12.5/serenity/model/user/struct.User.html#method.direct_message)
          *  - Message contains a Selection menu
          */
-        verify_user::verify_user(new_member.user.id, ctx);
+
+        // TODO: i am lazily unwrapping, fix later
+        verify_user::verify_user(new_member.user.id, ctx.serenity_context).await.unwrap();
     }
 
     Ok(())
@@ -26,5 +30,23 @@ async fn event_handler(
 
 #[tokio::main]
 async fn main() {
-    // TODO: important stuff like initializing the whole connection with discord??
+    let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
+
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions::<Data, Error> {
+            event_handler: |ctx, event| Box::pin(event_handler(ctx, event)),
+            ..Default::default()
+        })
+        .setup(|ctx, _ready, framework| {
+            Box::pin(async move {
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(())
+            })
+        })
+        .build();
+
+    let client = ClientBuilder::new(token, INTENTS)
+        .framework(framework)
+        .await;
+    client.unwrap().start().await.unwrap();
 }
